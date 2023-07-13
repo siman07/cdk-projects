@@ -1,0 +1,68 @@
+import * as cdk from 'aws-cdk-lib';
+import * as ec2 from 'aws-cdk-lib/aws-ec2';
+import * as elbv2 from 'aws-cdk-lib/aws-elasticloadbalancingv2';
+import * as rds from 'aws-cdk-lib/aws-rds';
+
+const app = new cdk.App();
+
+const stack = new cdk.Stack(app, 'MyStack');
+
+// Create VPC
+const vpc = new ec2.Vpc(stack, 'MyVpc', {
+  maxAzs: 2, // Use two Availability Zones
+});
+
+// Create Security Group for the EC2 instance
+const instanceSecurityGroup = new ec2.SecurityGroup(stack, 'InstanceSecurityGroup', {
+  vpc,
+  allowAllOutbound: true, // Allow outbound traffic from the EC2 instance
+});
+instanceSecurityGroup.addIngressRule(ec2.Peer.anyIpv4(), ec2.Port.tcp(80)); // Example rule, adjust as per your requirements
+
+// Create Security Group for the RDS instance
+const rdsSecurityGroup = new ec2.SecurityGroup(stack, 'RdsSecurityGroup', {
+  vpc,
+  allowAllOutbound: true, // Allow outbound traffic from the RDS instance
+});
+rdsSecurityGroup.addIngressRule(instanceSecurityGroup, ec2.Port.tcp(5432)); // Example rule, adjust as per your RDS configuration
+
+// Create RDS instance
+const rdsInstance = new rds.DatabaseInstance(stack, 'RdsInstance', {
+  vpc,
+  engine: rds.DatabaseInstanceEngine.POSTGRES,
+  instanceType: ec2.InstanceType.of(ec2.InstanceClass.BURSTABLE3, ec2.InstanceSize.MICRO),
+  securityGroups: [rdsSecurityGroup],
+  credentials: rds.Credentials.fromPassword('admin', cdk.SecretValue.plainText('password')),
+});
+
+// Create EC2 instance
+const ec2Instance = new ec2.Instance(stack, 'Ec2Instance', {
+  vpc,
+  instanceType: ec2.InstanceType.of(ec2.InstanceClass.BURSTABLE3, ec2.InstanceSize.MICRO),
+  machineImage: ec2.MachineImage.latestAmazonLinux({
+    generation: ec2.AmazonLinuxGeneration.AMAZON_LINUX_2,
+  }),
+  securityGroup: instanceSecurityGroup,
+});
+
+// Create Application Load Balancer
+const alb = new elbv2.ApplicationLoadBalancer(stack, 'Alb', {
+  vpc,
+  internetFacing: true,
+});
+
+// Create target group for the EC2 instance
+const targetGroup = new elbv2.ApplicationTargetGroup(stack, 'TargetGroup', {
+  vpc,
+  port: 80,
+  targets: [ec2Instance],
+  targetType: elbv2.TargetType.INSTANCE,
+});
+
+// Create listener for the ALB
+const listener = alb.addListener('Listener', {
+  port: 80,
+  defaultTargetGroups: [targetGroup],
+});
+
+app.synth();
